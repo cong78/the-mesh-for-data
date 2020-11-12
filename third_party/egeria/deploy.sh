@@ -8,7 +8,7 @@ set -x
 CHART=odpi-egeria-lab
 RELEASE=lab
 NAMESPACE=egeria-catalog
-TIMEOUT=8m
+TIMEOUT=20m
 VERSION="V2.1"
 
 undeploy() {
@@ -58,11 +58,12 @@ config() {
             -o=jsonpath='{.items[0].metadata.name}')
 
         kubectl exec -n $NAMESPACE -it $pod -- \
-            jupyter nbconvert --execute egeria-server-config.ipynb
+            jupyter nbconvert --execute egeria-server-config.ipynb \
+            --ExecutePreprocessor.timeout=3000
 
         kubectl exec -n $NAMESPACE -it $pod -- \
             jupyter nbconvert --execute egeria-server-start.ipynb \
-            --ExecutePreprocessor.timeout=-1
+            --ExecutePreprocessor.timeout=3000
     }
 
 case "$1" in
