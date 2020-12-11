@@ -13,11 +13,21 @@ spec:
     spec:
       containers:
       - name: manager
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
+        args:
+        - "--metrics-addr=127.0.0.1:8080"
+        - "--enable-leader-election"
+        - "--enable-motion-controller"
+        - "--enable-blueprint-controller"
         env:
         - name: ENABLE_WEBHOOKS
           value: "true"
-        - name: MOVER_IMAGE
-          value: "mover:1.0-SNAPSHOT"
         - name: IMAGE_PULL_POLICY
           value: "IfNotPresent"
+        - name: NO_FINALIZER
+          value: "false"
+        - name: GODEBUG
+          value: "x509ignoreCN=0"
+        envFrom:
+        - configMapRef:
+            name: m4d-config
