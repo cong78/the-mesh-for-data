@@ -18,6 +18,9 @@ KUBE_NAMESPACE ?= m4d-system
 include $(ROOT_DIR)/hack/make-rules/docker.mk
 include $(ROOT_DIR)/hack/make-rules/verify.mk
 
+config/default/kustomization.yaml: config/default/kustomization.yaml.in
+	cp $< $@
+
 # Run tests
 test: generate manifests
 	go test ./... -coverprofile cover.out
@@ -50,14 +53,34 @@ install: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests
 uninstall: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests
 	$(TOOLBIN)/kustomize build config/crd | $(TOOLBIN)/kubectl delete -f -
 
+# Install core into charts/m4d
+.PHONY: charts
+charts:
+	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${IMG}
+	$(TOOLBIN)/kustomize build config/default > $(ROOT_DIR)/charts/m4d/templates/manager.yaml
+
+# Install CRDs into a charts/m4d-crds
+.PHONY: charts-crd
+charts-crd: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests
+	$(TOOLBIN)/kustomize build config/crd > $(ROOT_DIR)/charts/m4d-crd/templates/crds.yaml
+
+.PHONY: deploy-crd
+deploy-crd:
+	kustomize build config/crd | kubectl apply -f -
+
+.PHONY: undeploy-crd
+undeploy-crd:
+	kustomize build config/crd | kubectl delete -f -
+
 # Deploy controller in the configured Kubernetes cluster in ~/.kube/config
-deploy: docker-secret manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
+deploy: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
 	$(TOOLBIN)/kubectl create namespace m4d-system || true
+	$(TOOLBIN)/kubectl create namespace m4d-blueprints || true
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${IMG}
 	$(TOOLBIN)/kustomize build config/default | $(TOOLBIN)/kubectl apply -f -
 
 # Delete controller in the configured Kubernetes cluster in ~/.kube/config
-undeploy: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests
+undeploy: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests config/default/kustomization.yaml
 	$(TOOLBIN)/kustomize build config/default | $(TOOLBIN)/kubectl delete -f -
 
 # Build manager binary as linux binary
@@ -71,34 +94,56 @@ docker-build: generate
 	rm manager
 
 # Deploy only movement-controller in the configured Kubernetes cluster in ~/.kube/config
-deploy_mc: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
+deploy_mc: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
 	$(TOOLBIN)/kubectl create namespace ${KUBE_NAMESPACE} || true
+	$(TOOLBIN)/kubectl create namespace m4d-blueprints || true
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
 	$(TOOLBIN)/kustomize build --load_restrictor none config/movement-controller | $(TOOLBIN)/kubectl apply -f -
 
-undeploy_mc: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
+undeploy_mc: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
 	$(TOOLBIN)/kustomize build --load_restrictor none config/movement-controller | $(TOOLBIN)/kubectl delete -f -
 
-deploy_it: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
+deploy_it: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml 
 	make build-ca-certs
-	make docker-secret
 	make deploy-custom-ca-secret
 	$(TOOLBIN)/kubectl create namespace ${KUBE_NAMESPACE} || true
+	$(TOOLBIN)/kubectl create namespace m4d-blueprints || true
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
 	cd config/integration-tests && $(ABSTOOLBIN)/kustomize edit set image data-catalog-mock=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/data-catalog-mock:${DOCKER_TAGNAME}
 	cd config/integration-tests && $(ABSTOOLBIN)/kustomize edit set image policycompiler=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/serverpolicycompiler-mock:${DOCKER_TAGNAME}
 	$(TOOLBIN)/kustomize build --load_restrictor none config/integration-tests | $(TOOLBIN)/kubectl apply -f -
 
-undeploy_it:
+deploy_multi_it: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
+	make build-ca-certs
+	make deploy-custom-ca-secret
+	$(TOOLBIN)/kubectl create namespace ${KUBE_NAMESPACE} || true
+	$(TOOLBIN)/kubectl create namespace m4d-blueprints || true
+	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
+	cd config/integration-tests && $(ABSTOOLBIN)/kustomize edit set image data-catalog-mock=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/data-catalog-mock:${DOCKER_TAGNAME}
+	cd config/integration-tests && $(ABSTOOLBIN)/kustomize edit set image policycompiler=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/serverpolicycompiler-mock:${DOCKER_TAGNAME}
+	$(TOOLBIN)/kustomize build --load_restrictor none config/multi-integration-tests | $(TOOLBIN)/kubectl apply -f -
+
+undeploy_it: config/default/kustomization.yaml
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
 	$(TOOLBIN)/kustomize build --load_restrictor none config/integration-tests | $(TOOLBIN)/kubectl delete -f -
 
+deploy_control_plane_security: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
+	$(TOOLBIN)/kubectl create namespace m4d-system || true
+	$(TOOLBIN)/kubectl label namespaces m4d-system istio-injection=enabled --overwrite || true
+	$(TOOLBIN)/kustomize build config/control-plane-security | $(TOOLBIN)/kubectl apply -f -
+
+undeploy_control_plane_security: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
+	$(TOOLBIN)/kubectl label namespace m4d-system istio-injection-
+	$(TOOLBIN)/kustomize build --load_restrictor none config/control-plane-security | $(TOOLBIN)/kubectl delete -f -
+
 .PHONY: wait_for_manager
-wait_for_manager:
+wait_for_manager: $(TOOLBIN)/kubectl
 	$(TOOLBIN)/kubectl wait --for=condition=available -n ${KUBE_NAMESPACE} deployment/m4d-controller-manager --timeout=120s
 
 .PHONY: run-integration-tests
+run-integration-tests: export DOCKER_HOSTNAME?=kind-registry:5000
+run-integration-tests: export DOCKER_NAMESPACE?=m4d-system
 run-integration-tests: wait_for_manager
 	NO_SIMULATED_PROGRESS=true USE_EXISTING_CONTROLLER=true USE_EXISTING_CLUSTER=true go test ./... -v -run TestMotionAPIs -count 1
 	NO_SIMULATED_PROGRESS=true USE_EXISTING_CONTROLLER=true USE_EXISTING_CLUSTER=true go test ./... -v -run TestAPIs -count 1
@@ -120,17 +165,6 @@ build-ca-certs: $(TOOLBIN)/kubectl
 deploy-custom-ca-secret: $(TOOLBIN)/kubectl
 	$(ABSTOOLBIN)/kubectl create secret generic registry-ca-cert \
 		--from-file=../hack/registry/ca-certificates.crt \
-		--namespace ${KUBE_NAMESPACE} \
-		|| true
-
-.PHONY: docker-secret
-docker-secret: $(TOOLBIN)/kubectl
-	$(ABSTOOLBIN)/kubectl create secret generic docker-credentials \
-		--from-literal=hostname=$(DOCKER_HOSTNAME) \
-		--from-literal=namespace=$(DOCKER_NAMESPACE) \
-		--from-literal=tagname=$(DOCKER_TAGNAME) \
-		--from-literal=username=$(DOCKER_USERNAME) \
-		--from-literal=password=$(DOCKER_PASSWORD) \
 		--namespace ${KUBE_NAMESPACE} \
 		|| true
 

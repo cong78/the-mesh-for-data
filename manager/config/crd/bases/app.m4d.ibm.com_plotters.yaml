@@ -8,6 +8,16 @@ metadata:
   creationTimestamp: null
   name: plotters.app.m4d.ibm.com
 spec:
+  additionalPrinterColumns:
+  - JSONPath: .metadata.creationTimestamp
+    name: Age
+    type: date
+  - JSONPath: .status.observedState.ready
+    name: Ready
+    type: string
+  - JSONPath: .status.readyTimestamp
+    name: ReadySince
+    type: string
   group: app.m4d.ibm.com
   names:
     kind: Plotter
@@ -422,61 +432,39 @@ spec:
                     - name
                     - steps
                     type: object
-                  selector:
-                    description: Selector enables to connect the resource to the application Should match the selector of the owner - M4DApplication CRD.
-                    properties:
-                      matchExpressions:
-                        description: matchExpressions is a list of label selector requirements. The requirements are ANDed.
-                        items:
-                          description: A label selector requirement is a selector that contains values, a key, and an operator that relates the key and values.
-                          properties:
-                            key:
-                              description: key is the label key that the selector applies to.
-                              type: string
-                            operator:
-                              description: operator represents a key's relationship to a set of values. Valid operators are In, NotIn, Exists and DoesNotExist.
-                              type: string
-                            values:
-                              description: values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch.
-                              items:
-                                type: string
-                              type: array
-                          required:
-                          - key
-                          - operator
-                          type: object
-                        type: array
-                      matchLabels:
-                        additionalProperties:
-                          type: string
-                        description: matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is "key", the operator is "In", and the values array contains only "value". The requirements are ANDed.
-                        type: object
-                    type: object
                   templates:
                     items:
                       description: ComponentTemplate is a copy of a M4DModule Custom Resource.  It contains the information necessary to instantiate a component in a FlowStep, which provides the functionality described by the module.  There are 3 different module types.
                       properties:
+                        chart:
+                          description: Chart contains the location of the helm chart with info detailing how to deploy
+                          properties:
+                            name:
+                              description: Name of helm chart
+                              type: string
+                            values:
+                              additionalProperties:
+                                type: string
+                              description: Values to pass to helm chart insallation
+                              type: object
+                          required:
+                          - name
+                          type: object
                         kind:
                           description: Kind of k8s resource
                           type: string
                         name:
                           description: Name of the template
                           type: string
-                        resources:
-                          description: Resources contains the location of the helm chart with info detailing how to deploy
-                          items:
-                            type: string
-                          type: array
                       required:
+                      - chart
                       - kind
                       - name
-                      - resources
                       type: object
                     type: array
                 required:
                 - entrypoint
                 - flow
-                - selector
                 - templates
                 type: object
               description: Blueprints structure represents remote blueprints mapped by the identifier of a cluster in which they will be running
@@ -520,6 +508,7 @@ spec:
           properties:
             blueprints:
               additionalProperties:
+                description: MetaBlueprint defines blueprint metadata (name, namespace) and status
                 properties:
                   metadata:
                     type: object
@@ -563,6 +552,9 @@ spec:
                   description: Ready represents that the modules have been orchestrated successfully and the data is ready for usage
                   type: boolean
               type: object
+            readyTimestamp:
+              format: date-time
+              type: string
           type: object
       type: object
   version: v1alpha1

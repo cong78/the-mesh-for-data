@@ -103,9 +103,9 @@ type ComponentTemplate struct {
 	// +required
 	Kind string `json:"kind"`
 
-	// Resources contains the location of the helm chart with info detailing how to deploy
+	// Chart contains the location of the helm chart with info detailing how to deploy
 	// +required
-	Resources []string `json:"resources"`
+	Chart ChartSpec `json:"chart"`
 }
 
 // DataFlow indicates the flow of the data between the components
@@ -127,11 +127,6 @@ type DataFlow struct {
 // The blueprint uses an "argo like" syntax which indicates the components and the flow of data between them as steps
 // TODO: Add an indication of the communication relationships between the components
 type BlueprintSpec struct {
-
-	// Selector enables to connect the resource to the application
-	// Should match the selector of the owner - M4DApplication CRD.
-	Selector metav1.LabelSelector `json:"selector"`
-
 	// +required
 	Entrypoint string `json:"entrypoint"`
 
@@ -161,6 +156,8 @@ type BlueprintStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.observedState.ready`
 
 // Blueprint is the Schema for the blueprints API
 type Blueprint struct {
@@ -171,6 +168,7 @@ type Blueprint struct {
 	Status BlueprintStatus `json:"status,omitempty"`
 }
 
+// MetaBlueprint defines blueprint metadata (name, namespace) and status
 type MetaBlueprint struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
@@ -188,4 +186,22 @@ type BlueprintList struct {
 
 func init() {
 	SchemeBuilder.Register(&Blueprint{}, &BlueprintList{})
+}
+
+// CreateMetaBlueprint creates MetaBlueprint structure of the given blueprint
+func CreateMetaBlueprint(blueprint *Blueprint) MetaBlueprint {
+	metaBlueprint := MetaBlueprint{
+		ObjectMeta: blueprint.ObjectMeta,
+		Status:     blueprint.Status,
+	}
+	return metaBlueprint
+}
+
+// CreateMetaBlueprintWithoutState creates the MetaBlueprint structure with an empty state
+func CreateMetaBlueprintWithoutState(blueprint *Blueprint) MetaBlueprint {
+	metaBlueprint := MetaBlueprint{
+		ObjectMeta: blueprint.ObjectMeta,
+		Status:     BlueprintStatus{},
+	}
+	return metaBlueprint
 }

@@ -56,6 +56,7 @@ jobs:
     install:
     - make install-tools
     script:
+    - make docker-mirror-read
     - make test
 
   # FIXME(hunchback): disabled as its' taking 15m to run
@@ -76,21 +77,12 @@ jobs:
     install:
     - make install-tools
     script:
-    - make kind-setup || travis_terminate 1; # Switch to make kind when istio is needed
-    - make cluster-prepare || travis_terminate 1;
-    - make docker
-    - make -C test/services docker-all # Build test services
-    - make cluster-prepare-wait || travis_terminate 1;
-    - make -C secret-provider configure-vault
-    - make -C secret-provider deploy || travis_terminate 1;
-    - make -C manager deploy_it || travis_terminate 1;
-    - make -C manager wait_for_manager || travis_terminate 1;
-    - make helm || travis_terminate 1;
-    - make -C manager run-integration-tests || travis_terminate 1;
+    - make docker-mirror-read
+    - make run-integration-tests
     deploy:
      skip_cleanup: true
      provider: script
-     script: make docker-retag-and-push-public
+     script: make docker-retag-and-push-public && make helm-push-public
      on:
        condition: $TRAVIS_PULL_REQUEST = false
        branch: master
@@ -105,31 +97,24 @@ jobs:
       skip_cleanup: true
       provider: pages
       local_dir: website/$WEBSITE_LOCAL_DIR
-      github_token: $GITHUB_TOKEN # Set in travis-ci dashboard
+      github_token: $GITHUB_TOKEN # generate with: public_repo or repo scope (for personal repo)
       on:
         branch: master
 
   - stage: Deploy
     name: "Kind deploy"
-    env:
-    - COMPONENT=connectors
-    - CLUSTER=kind
     install:
     - make install-tools
     script:
-    - make $CLUSTER || travis_terminate 1;
-    - make cluster-prepare || travis_terminate 1;
-    - make -C third_party/opa deploy || travis_terminate 1;
-    - make -C $COMPONENT deploy
-    - ./hack/tools/bin/kubectl get pod --all-namespaces
+    - make docker-mirror-read
+    - make run-deploy-tests
     if: branch = master AND type = push
 
 notifications:
   email: false
 deploy:
   provider: releases
-  api_key:
-    secure: Es3z5bIx3N2en+vn6ogPyftwMoyUYE60s29gfBmThBd0UoQKKltGn5bCo1UnR5NpmNAyDlJtz2yN239IImp2RYwLGVXMrT/lqsTtsrEm8rKEgMWhteBdxWeZhBWMEip0PjZznO0gY9ALAH0IALvYqtVmo93ZtvXXbyYgzXleqNSGE1ChK3u7gFrNeEHKH1ivQ0xKozg3W4kaKAxwnbsi7KSxyb0o/aK8QGPya8Ldfn0l7DhxMuSe9a3l30dnoh0EOTEsH9yosYmhqG+e4erKBSdjKbzQpxzh9xpKHbw998p84OsVrSR8UyRNmzG6IhfISVRUsn73CtpG7imeMhTaezcXQ0Hy1r6WvumoSl7oOFLUz1b3R59bfR1XCYKLcWgK4kek/unzd0x2OJJWdfy/RgCRwnr60O0hD3bwm5w9I2DywyF7ilObGp0M/oo8LiKryawe9lahkrIhRNVdgNEO62q/UmNTOfTH3pm2wXDMAaciphXkbK5ZFfGo5Xzdpx6Cm72ctMc3hcfLw4W5btNOKTXlfLHNdicTSRdFVlosvZMBgYpuoeloj232Kx4HYvbOals7vRM2FhZGWRZ4g2QMB8b6piVD/TRYUUnZeUOP4q+Hi6E2hb902M7LJZz968clMGeC6nLhsOJBHh+4lAfL1RBex85Y5ma60OV1YpvdUnk=
+  api_key: $GITHUB_TOKEN # generate with: public_repo or repo scope (for personal repo)
   file:
   - README.md
   skip_cleanup: 'true'

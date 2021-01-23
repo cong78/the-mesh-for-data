@@ -1,0 +1,11 @@
+# Default values for m4d.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  opa: true
+
+image:
+   mover: ghcr.io/the-mesh-for-data/mover:latest
+   manager: ghcr.io/the-mesh-for-data/manager:latest
+   secretProvider: ghcr.io/the-mesh-for-data/secret-provider:latest

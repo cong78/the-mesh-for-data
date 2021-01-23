@@ -4,26 +4,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: opa-connector
+  name: egr-connector
   labels:
-    app: opa-connector
+    app: egr-connector
 spec:
   selector:
     matchLabels:
-      app: opa-connector
+      app: egr-connector
   replicas: 1
   template:
     metadata:
+      annotations:
+        sidecar.istio.io/inject: "true"
       labels:
-        app: opa-connector
+        app: egr-connector
+        m4d.ibm.com/componentType: connector
     spec:
       containers:
-      - name: opa-connector
-        image: opa-connector:latest
+      - name: egr-connector
+        image: egr-connector:latest
         imagePullPolicy: Always
         ports:
-        - name: opa-connector
-          containerPort: 50082
+        - name: egr-connector
+          containerPort: 50084
         envFrom:
         - configMapRef:
             name: m4d-config
@@ -31,10 +34,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: opa-connector
+  name: egr-connector
 spec:
   selector:
-    app: opa-connector
+    app: egr-connector
   ports:
-  - port: 50082
-    targetPort: opa-connector
+  - port: 50084
+    targetPort: egr-connector
