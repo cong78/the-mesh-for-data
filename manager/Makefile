@@ -1,6 +1,3 @@
-# Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
-CRD_OPTIONS ?= "crd:trivialVersions=true"
-
 ROOT_DIR := ..
 include $(ROOT_DIR)/Makefile.env
 #include Makefile.env
@@ -40,8 +37,14 @@ generate: $(TOOLBIN)/controller-gen
 
 # Generate code
 .PHONY: manifests
-manifests: $(TOOLBIN)/controller-gen
-	$(TOOLBIN)/controller-gen $(CRD_OPTIONS) rbac:roleName=manager-role webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+manifests: $(TOOLBIN)/controller-gen $(TOOLBIN)/yq
+	$(TOOLBIN)/controller-gen crd:trivialVersions=true webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(TOOLBIN)/controller-gen crd:trivialVersions=true output:crd:artifacts:config=$(ROOT_DIR)/charts/m4d-crd/templates/ paths=./apis/...
+	$(TOOLBIN)/controller-gen webhook paths=./apis/... output:stdout | \
+		$(TOOLBIN)/yq eval '.metadata.annotations."cert-manager.io/inject-ca-from" |= "{{ .Release.Namespace }}/serving-cert"' - | \
+		$(TOOLBIN)/yq eval '(.metadata.name | select(. == "mutating-webhook-configuration")) = "{{ .Release.Namespace }}-mutating-webhook"' - | \
+		$(TOOLBIN)/yq eval '(.metadata.name | select(. == "validating-webhook-configuration")) = "{{ .Release.Namespace }}-validating-webhook"' - | \
+		$(TOOLBIN)/yq eval '(.webhooks.[].clientConfig.service.namespace) = "{{ .Release.Namespace }}"' - > $(ROOT_DIR)/charts/m4d/templates/webhook-configs.yaml
 
 # Install CRDs into a cluster
 .PHONY: install
@@ -58,11 +61,6 @@ uninstall: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests
 charts:
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${IMG}
 	$(TOOLBIN)/kustomize build config/default > $(ROOT_DIR)/charts/m4d/templates/manager.yaml
-
-# Install CRDs into a charts/m4d-crds
-.PHONY: charts-crd
-charts-crd: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl manifests
-	$(TOOLBIN)/kustomize build config/crd > $(ROOT_DIR)/charts/m4d-crd/templates/crds.yaml
 
 .PHONY: deploy-crd
 deploy-crd:
@@ -105,8 +103,6 @@ undeploy_mc: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/ku
 	$(TOOLBIN)/kustomize build --load_restrictor none config/movement-controller | $(TOOLBIN)/kubectl delete -f -
 
 deploy_it: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml 
-	make build-ca-certs
-	make deploy-custom-ca-secret
 	$(TOOLBIN)/kubectl create namespace ${KUBE_NAMESPACE} || true
 	$(TOOLBIN)/kubectl create namespace m4d-blueprints || true
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
@@ -115,8 +111,6 @@ deploy_it: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kust
 	$(TOOLBIN)/kustomize build --load_restrictor none config/integration-tests | $(TOOLBIN)/kubectl apply -f -
 
 deploy_multi_it: manifests $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl config/default/kustomization.yaml
-	make build-ca-certs
-	make deploy-custom-ca-secret
 	$(TOOLBIN)/kubectl create namespace ${KUBE_NAMESPACE} || true
 	$(TOOLBIN)/kubectl create namespace m4d-blueprints || true
 	cd config/manager && $(ABSTOOLBIN)/kustomize edit set image controller=${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME}
@@ -142,7 +136,7 @@ wait_for_manager: $(TOOLBIN)/kubectl
 	$(TOOLBIN)/kubectl wait --for=condition=available -n ${KUBE_NAMESPACE} deployment/m4d-controller-manager --timeout=120s
 
 .PHONY: run-integration-tests
-run-integration-tests: export DOCKER_HOSTNAME?=kind-registry:5000
+run-integration-tests: export DOCKER_HOSTNAME?=localhost:5000
 run-integration-tests: export DOCKER_NAMESPACE?=m4d-system
 run-integration-tests: wait_for_manager
 	NO_SIMULATED_PROGRESS=true USE_EXISTING_CONTROLLER=true USE_EXISTING_CLUSTER=true go test ./... -v -run TestMotionAPIs -count 1
@@ -150,23 +144,6 @@ run-integration-tests: wait_for_manager
 
 .PHONY: main.deps
 main.deps: generate fmt vet manifests
-
-# Download CA certificates from manager image and add the CA certificate that was generated for the test.
-# This file is then uploaded to K8s as a secret and injected into the manager during deployment.
-# This way the image of the manger is not altered and still only contains the CA certificates from the base image.
-.PHONY: build-ca-certs
-build-ca-certs: $(TOOLBIN)/kubectl
-	rm $(ROOT_DIR)/hack/registry/ca-certificates.crt || true
-	# Hack to fetch CA certificates of base image
-	bash -c "docker cp $$(docker create --rm $(DOCKER_HOSTNAME)/$(DOCKER_NAMESPACE)/$(DOCKER_NAME):$(DOCKER_TAGNAME)):/etc/ssl/certs/ca-certificates.crt $(ROOT_DIR)/hack/registry/ca-certificates.crt"
-	cat $(ROOT_DIR)/hack/registry/themeshfordata-ca.crt >> $(ROOT_DIR)/hack/registry/ca-certificates.crt
-
-.PHONY: deploy-custom-ca-secret
-deploy-custom-ca-secret: $(TOOLBIN)/kubectl
-	$(ABSTOOLBIN)/kubectl create secret generic registry-ca-cert \
-		--from-file=../hack/registry/ca-certificates.crt \
-		--namespace ${KUBE_NAMESPACE} \
-		|| true
 
 DEBUG := ./debug.out
 

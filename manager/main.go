@@ -11,11 +11,11 @@ import (
 	"github.com/ibm/the-mesh-for-data/pkg/multicluster"
 	"github.com/ibm/the-mesh-for-data/pkg/multicluster/local"
 	"github.com/ibm/the-mesh-for-data/pkg/multicluster/razee"
+	"github.com/ibm/the-mesh-for-data/pkg/storage"
 
 	"github.com/ibm/the-mesh-for-data/manager/controllers/motion"
 
 	"github.com/hashicorp/vault/api"
-	networkingv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	comv1alpha1 "github.com/IBM/dataset-lifecycle-framework/src/dataset-operator/pkg/apis/com/v1alpha1"
 	appv1 "github.com/ibm/the-mesh-for-data/manager/apis/app/v1alpha1"
 	motionv1 "github.com/ibm/the-mesh-for-data/manager/apis/motion/v1alpha1"
 	"github.com/ibm/the-mesh-for-data/manager/controllers/app"
@@ -42,7 +43,7 @@ func init() {
 
 	_ = motionv1.AddToScheme(scheme)
 	_ = appv1.AddToScheme(scheme)
-	_ = networkingv1alpha3.AddToScheme(scheme)
+	_ = comv1alpha1.SchemeBuilder.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -109,11 +110,16 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrlOps)
 
-	// Initialize ClusterManager
-	clusterManager := NewClusterManager(mgr)
-
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
+	// Initialize ClusterManager
+	clusterManager, err := NewClusterManager(mgr)
+
+	if err != nil {
+		setupLog.Error(err, "unable to initialize cluster manager")
 		os.Exit(1)
 	}
 
@@ -129,7 +135,7 @@ func main() {
 		policyCompiler := pc.NewPolicyCompiler()
 
 		// Initiate the M4DApplication Controller
-		applicationController := app.NewM4DApplicationReconciler(mgr, "M4DApplication", vaultClient, policyCompiler, clusterManager)
+		applicationController := app.NewM4DApplicationReconciler(mgr, "M4DApplication", vaultClient, policyCompiler, clusterManager, storage.NewProvisionImpl(mgr.GetClient()))
 		if err := applicationController.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "M4DApplication")
 			os.Exit(1)
@@ -195,20 +201,17 @@ func initVaultConnection() (*api.Client, error) {
 
 // This method decides based on the environment variables that are set which
 // cluster manager instance should be initiated.
-func NewClusterManager(mgr manager.Manager) multicluster.ClusterManager {
+func NewClusterManager(mgr manager.Manager) (multicluster.ClusterManager, error) {
 	setupLog := ctrl.Log.WithName("setup")
 	if user, razeeLocal := os.LookupEnv("RAZEE_USER"); razeeLocal {
 		razeeURL := strings.TrimSpace(os.Getenv("RAZEE_URL"))
 		password := strings.TrimSpace(os.Getenv("RAZEE_PASSWORD"))
-		orgID := strings.TrimSpace(os.Getenv("RAZEE_ORG_ID"))
 
-		setupLog.Info("Using razee at " + razeeURL + " orgId " + orgID)
-		return razee.NewRazeeManager(strings.TrimSpace(razeeURL), strings.TrimSpace(user), password, orgID)
+		setupLog.Info("Using razee local at " + razeeURL)
+		return razee.NewRazeeManager(strings.TrimSpace(razeeURL), strings.TrimSpace(user), password)
 	} else if apiKey, satConf := os.LookupEnv("IAM_API_KEY"); satConf {
-		orgID := strings.TrimSpace(os.Getenv("RAZEE_ORG_ID"))
-
-		setupLog.Info("Using IBM Satellite config with orgId " + orgID)
-		return razee.NewSatConfManager(strings.TrimSpace(apiKey), orgID)
+		setupLog.Info("Using IBM Satellite config")
+		return razee.NewSatConfManager(strings.TrimSpace(apiKey))
 	} else {
 		setupLog.Info("Using local cluster manager")
 		return local.NewManager(mgr.GetClient(), utils.GetSystemNamespace())

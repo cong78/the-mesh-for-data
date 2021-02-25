@@ -15,7 +15,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	comv1alpha1 "github.com/IBM/dataset-lifecycle-framework/src/dataset-operator/pkg/apis/com/v1alpha1"
 	appapi "github.com/ibm/the-mesh-for-data/manager/apis/app/v1alpha1"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -32,6 +34,7 @@ import (
 	"github.com/ibm/the-mesh-for-data/manager/controllers/mockup"
 	"github.com/ibm/the-mesh-for-data/pkg/helm"
 	local "github.com/ibm/the-mesh-for-data/pkg/multicluster/local"
+	"github.com/ibm/the-mesh-for-data/pkg/storage"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -70,12 +73,15 @@ var _ = BeforeSuite(func(done Done) {
 
 	err = appapi.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = comv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
 	if os.Getenv("USE_EXISTING_CONTROLLER") == "true" {
 		logf.Log.Info("Using existing controller in existing cluster...")
 		k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
 	} else {
 		// Mockup connectors
 		go mockup.CreateTestCatalogConnector(GinkgoT())
@@ -97,11 +103,14 @@ var _ = BeforeSuite(func(done Done) {
 		policyCompiler := &mockup.MockPolicyCompiler{}
 		// Initiate the M4DApplication Controller
 		var clusterManager *mockup.ClusterLister
-		err = NewM4DApplicationReconciler(mgr, "M4DApplication", nil, policyCompiler, clusterManager).SetupWithManager(mgr)
+		err = NewM4DApplicationReconciler(mgr, "M4DApplication", nil, policyCompiler, clusterManager, storage.NewProvisionTest()).SetupWithManager(mgr)
 		Expect(err).ToNot(HaveOccurred())
 		err = NewBlueprintReconciler(mgr, "Blueprint", fakeHelm).SetupWithManager(mgr)
 		Expect(err).ToNot(HaveOccurred())
-		SetupPlotterController(mgr, local.NewManager(mgr.GetClient(), "m4d-system"))
+		clusterMgr, err := local.NewManager(mgr.GetClient(), "m4d-system")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(clusterMgr).NotTo(BeNil())
+		SetupPlotterController(mgr, clusterMgr)
 
 		go func() {
 			err = mgr.Start(ctrl.SetupSignalHandler())
@@ -127,9 +136,10 @@ var _ = BeforeSuite(func(done Done) {
 			Namespace: "m4d-system",
 		},
 		Data: map[string]string{
-			"ClusterName": "US-cluster",
-			"Region":      "US",
-			"Zone":        "North-America",
+			"ClusterName":   "US-cluster",
+			"Region":        "US",
+			"Zone":          "North-America",
+			"VaultAuthPath": "kind",
 		},
 	}))
 	close(done)
