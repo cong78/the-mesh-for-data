@@ -27,7 +27,7 @@ run-integration-tests:
 	$(MAKE) kind
 	$(MAKE) cluster-prepare
 	$(MAKE) docker
-	$(MAKE) -C test/services docker-all
+	$(MAKE) -C test/services docker-build docker-push
 	$(MAKE) cluster-prepare-wait
 	$(MAKE) configure-vault
 	$(MAKE) -C secret-provider configure-vault
@@ -56,14 +56,13 @@ run-deploy-tests:
 cluster-prepare:
 	$(MAKE) -C third_party/cert-manager deploy
 	$(MAKE) -C third_party/registry deploy
-	$(MAKE) -C third_party/vault deploy
+	$(MAKE) -C charts vault
 	kubectl apply -f https://raw.githubusercontent.com/IBM/dataset-lifecycle-framework/master/release-tools/manifests/dlf.yaml
 
 
 .PHONY: cluster-prepare-wait
 cluster-prepare-wait:
 	$(MAKE) -C third_party/cert-manager deploy-wait
-	$(MAKE) -C third_party/vault deploy-wait
 	kubectl wait --for=condition=ready pod -n dlf --all --timeout=120s
 
 .PHONY: install
@@ -84,19 +83,15 @@ undeploy:
 	$(MAKE) -C connectors undeploy
 
 .PHONY: docker
-docker:
-	$(MAKE) -C manager docker-all
-	$(MAKE) -C secret-provider docker-all
-	$(MAKE) -C connectors docker-all
-	$(MAKE) -C test/dummy-mover docker-all
+docker: docker-build docker-push
 
 # Build only the docker images needed for integration testing
 .PHONY: docker-minimal-it
 docker-minimal-it:
-	$(MAKE) -C manager docker-all
-	$(MAKE) -C secret-provider docker-all
-	$(MAKE) -C test/dummy-mover docker-all
-	$(MAKE) -C test/services docker-all
+	$(MAKE) -C manager docker-build docker-push
+	$(MAKE) -C secret-provider docker-build docker-push
+	$(MAKE) -C test/dummy-mover docker-build docker-push
+	$(MAKE) -C test/services docker-build docker-push
 
 .PHONY: docker-build
 docker-build:
@@ -121,8 +116,9 @@ DOCKER_PUBLIC_NAMESPACE ?= the-mesh-for-data
 DOCKER_PUBLIC_NAMES := \
 	manager \
 	secret-provider \
-	egr-connector \
 	dummy-mover \
+	egr-connector \
+	katalog-connector \
 	opa-connector \
 	vault-connector
  
@@ -147,6 +143,15 @@ ifneq (${TRAVIS_TAG},)
 	DOCKER_HOSTNAME=${DOCKER_PUBLIC_HOSTNAME} DOCKER_NAMESPACE=${DOCKER_PUBLIC_NAMESPACE} DOCKER_TAGNAME=${TRAVIS_TAG} make -C modules helm-chart-push
 endif
 
+.PHONY: save-images
+save-images:
+	docker save -o images.tar ${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/manager:${DOCKER_TAGNAME} \
+		${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/secret-provider:${DOCKER_TAGNAME} \
+		${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/dummy-mover:${DOCKER_TAGNAME} \
+		${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/egr-connector:${DOCKER_TAGNAME} \
+		${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/katalog-connector:${DOCKER_TAGNAME} \
+		${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/opa-connector:${DOCKER_TAGNAME} \
+		${DOCKER_HOSTNAME}/${DOCKER_NAMESPACE}/vault-connector:${DOCKER_TAGNAME}
 
 include hack/make-rules/tools.mk
 include hack/make-rules/verify.mk

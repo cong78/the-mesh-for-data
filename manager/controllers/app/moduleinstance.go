@@ -4,12 +4,10 @@
 package app
 
 import (
-	"encoding/json"
 	"strings"
 
 	"emperror.dev/errors"
 	"github.com/go-logr/logr"
-	vault "github.com/hashicorp/vault/api"
 	app "github.com/ibm/the-mesh-for-data/manager/apis/app/v1alpha1"
 	modules "github.com/ibm/the-mesh-for-data/manager/controllers/app/modules"
 	"github.com/ibm/the-mesh-for-data/manager/controllers/utils"
@@ -19,6 +17,7 @@ import (
 	pc "github.com/ibm/the-mesh-for-data/pkg/policy-compiler/policy-compiler"
 	"github.com/ibm/the-mesh-for-data/pkg/serde"
 	"github.com/ibm/the-mesh-for-data/pkg/storage"
+	vault "github.com/ibm/the-mesh-for-data/pkg/vault"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,7 +39,7 @@ type ModuleManager struct {
 	PolicyCompiler     pc.IPolicyCompiler
 	WorkloadGeography  string
 	Provision          storage.ProvisionInterface
-	VaultClient        *vault.Client
+	VaultConnection    vault.Interface
 	ProvisionedStorage map[string]NewAssetInfo
 }
 
@@ -81,11 +80,15 @@ func (m *ModuleManager) GetCopyDestination(item modules.DataInfo, destinationInt
 		m.Log.Info("Bucket allocation failed: " + err.Error())
 		return nil, err
 	}
-	if err = m.registerSecretInVault(bucket.Name, bucket.SecretRef); err != nil {
+	credsMap, err := SecretToCredentialMap(m.Client, bucket.SecretRef)
+	if err != nil {
+		m.Log.Info("Could not fetch credentials: " + err.Error())
+		return nil, err
+	}
+	if err = m.VaultConnection.AddSecret(utils.GetVaultDatasetHome()+bucket.Name, credsMap); err != nil {
 		m.Log.Info("Could not register secret in vault: " + err.Error())
 		return nil, err
 	}
-
 	bucketRef := &types.NamespacedName{Name: bucket.Name, Namespace: utils.GetSystemNamespace()}
 	if err = m.Provision.CreateDataset(bucketRef, bucket, &m.Owner); err != nil {
 		m.Log.Info("Dataset creation failed: " + err.Error())
@@ -133,29 +136,6 @@ func (m *ModuleManager) GetCopyDestination(item modules.DataInfo, destinationInt
 		Connection: *connection,
 		Format:     string(destinationInterface.DataFormat),
 	}, nil
-}
-
-func (m *ModuleManager) registerSecretInVault(id string, secretRef types.NamespacedName) error {
-	var err error
-	var credentials *pb.Credentials
-	if credentials, err = SecretToCredentials(m.Client, secretRef.Name); err != nil {
-		return err
-	}
-	if credentials.AccessKey == "" || credentials.SecretKey == "" {
-		return errors.New("accessKeyID and secretAccessKey must be specified in " + secretRef.Name)
-	}
-	jsonStr, err := json.Marshal(credentials)
-	if err != nil {
-		return err
-	}
-	credentialsMap := make(map[string]interface{})
-	if err := json.Unmarshal(jsonStr, &credentialsMap); err != nil {
-		return err
-	}
-	if _, err := utils.AddToVault(id, credentialsMap, m.VaultClient); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (m *ModuleManager) selectReadModule(item modules.DataInfo, appContext *app.M4DApplication) (*modules.Selector, error) {
@@ -306,8 +286,8 @@ func (m *ModuleManager) SelectModuleInstances(item modules.DataInfo, appContext 
 		}
 		for _, cluster := range m.Clusters {
 			if copyCluster == cluster.Name {
-				copyArgs.Copy.Destination.Vault.AuthPath = cluster.Metadata.VaultAuthPath
-				copyArgs.Copy.Source.Vault.AuthPath = cluster.Metadata.VaultAuthPath
+				copyArgs.Copy.Destination.Vault.AuthPath = utils.GetAuthPath(cluster.Metadata.VaultAuthPath)
+				copyArgs.Copy.Source.Vault.AuthPath = utils.GetAuthPath(cluster.Metadata.VaultAuthPath)
 				break
 			}
 		}
@@ -336,7 +316,7 @@ func (m *ModuleManager) SelectModuleInstances(item modules.DataInfo, appContext 
 		}
 		for _, cluster := range m.Clusters {
 			if readCluster == cluster.Name {
-				readSource.Vault.AuthPath = cluster.Metadata.VaultAuthPath
+				readSource.Vault.AuthPath = utils.GetAuthPath(cluster.Metadata.VaultAuthPath)
 				break
 			}
 		}
